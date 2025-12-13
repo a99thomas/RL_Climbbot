@@ -1,0 +1,39 @@
+<mujoco model="slow_slider_demo">
+  <compiler angle="radian" />
+  <option timestep="0.002" />
+  <worldbody>
+    <body name="base" pos="0 0 0">
+      <geom name="ground" type="plane" size="5 5 0.1"/>
+      <body name="slider_body" pos="0 0 0.1">
+        <!-- sliding along z -->
+        <joint name="lin" type="slide" axis="0 0 1" pos="0 0 0" range="-0.2 0.2"/>
+        <geom name="block" type="box" size="0.03 0.03 0.03" pos="0 0 0.05"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <!-- Option A: position actuator with internal filter (slow but exact final pos) -->
+    <position name="lin_pos_filter"
+              joint="lin"
+              kp="1500"              
+              kv="60"               
+              gear="1"
+              timeconst="0.3"           
+              ctrllimited="true"
+              ctrlrange="-0.2 0.2"
+              forcelimited="true"
+              forcerange="-222.4 222.4" />
+
+    <!-- Option B: direct motor (you will compute PID externally and write torque/force into ctrl) -->
+    <!-- <general name="lin_motor"
+             joint="lin"
+             gaintype="fixed"
+             gainprm="1"
+             ctrllimited="true"
+             ctrlrange="-1000 1000"
+             forcelimited="true"
+             forcerange="-222.4 222.4"
+             dyntype="none" /> -->
+  </actuator>
+</mujoco>

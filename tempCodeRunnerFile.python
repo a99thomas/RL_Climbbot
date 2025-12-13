@@ -1,0 +1,279 @@
+#!/usr/bin/env python3
+"""
+test_ik.py
+Basic IK unit/integration test for kinematics.ik_right and kinematics.ik_left.
+
+What it does:
+ - Instantiates the environment to get model, data, and workspace limits
+ - Samples targets:
+     * random inside workspace
+     * near boundaries
+     * some deliberately outside workspace
+ - Calls ik_right / ik_left and records:
+     * IK success flag
+     * returned q (if available)
+     * forward-kinematics error (if kinematics.fk_right/fk_left exist)
+     * joint-limit violations (if joint limits are provided)
+ - Prints a summary of success rates and errors.
+
+Notes:
+ - The script is defensive: if fk functions are not present it still reports IK success
+   and clips/limit-check results so you still get useful signal.
+ - If you want to validate using a MuJoCo forward transform instead of kinematics.fk_*
+   you can extend the "check_with_sim" function to set qpos and query site transforms.
+"""
+
+import numpy as np
+import traceback
+import sys
+import time
+
+# try importing your project modules
+try:
+    import kinematics
+    import mujoco_tools as mt
+    import mujoco_viewer as cr
+except Exception as e:
+    print("Failed to import project modules (kinematics, mujoco_tools, mujoco_viewer).")
+    print(e)
+    traceback.print_exc()
+    sys.exit(1)
+
+# Try to import the env class directly (if available)
+try:
+    from climbbot_env import ClimbBotEnv  # if you put env in climbbot_env.py
+except Exception:
+    # fallback: instantiate via gym.make if registered, otherwise construct directly
+    ClimbBotEnv = None
+
+# Configuration
+N_SAMPLES = 200
+OUT_OF_BOUNDS_RATIO = 0.15   # fraction of samples intentionally outside workspace
+NEAR_BOUNDARY_RATIO = 0.15   # fraction of samples near boundary
+RNG = np.random.RandomState(12345)
+
+def instantiate_env():
+    if ClimbBotEnv is not None:
+        env = ClimbBotEnv(render_mode=None)
+    else:
+        # try gym.make
+        try:
+            import gymnasium as gym
+            env = gym.make('ClimbingRobot', render_mode=None)
+        except Exception:
+            # last resort: try to import the climbing robot viewer directly and build small wrapper
+            env = cr.ClimbingRobot(render_mode=None)
+            # create a tiny wrapper-like object to expose the fields we need
+            class TinyEnv:
+                def __init__(self, climbbot):
+                    self.climbbot = climbbot
+                    # copy workspace bounds if present
+                    self.workspace_min = getattr(climbbot, "workspace_min", np.array([-0.5,-0.5,0.0],dtype=np.float32))
+                    self.workspace_max = getattr(climbbot, "workspace_max", np.array([0.8,0.5,0.5],dtype=np.float32))
+                    # joint limits fallback; may not be present
+                    self.joint_limits_min = getattr(climbbot, "joint_limits_min", np.array([-np.pi]*6))
+                    self.joint_limits_max = getattr(climbbot, "joint_limits_max", np.array([np.pi]*6))
+                    # provide minimal functions used below
+                    self.reset = lambda : None
+                def __getattr__(self, name):
+                    return getattr(self.climbbot, name)
+            env = TinyEnv(env)
+    # reset to get poses
+    try:
+        env.reset()
+    except Exception:
+        pass
+    return env
+
+def sample_target_inside(workspace_min, workspace_max):
+    return RNG.uniform(workspace_min, workspace_max).astype(np.float64)
+
+def sample_target_near_boundary(workspace_min, workspace_max, eps=0.02):
+    # pick one axis and push near min or max
+    t = sample_target_inside(workspace_min, workspace_max)
+    axis = RNG.randint(0, 3)
+    near_max = RNG.rand() < 0.5
+    if near_max:
+        t[axis] = workspace_max[axis] - RNG.rand() * eps
+    else:
+        t[axis] = workspace_min[axis] + RNG.rand() * eps
+    return t
+
+def sample_target_outside(workspace_min, workspace_max, margin=0.1):
+    # sample a point that is outside by moving one axis outside by margin
+    t = sample_target_inside(workspace_min, workspace_max)
+    axis = RNG.randint(0, 3)
+    push_high = RNG.rand() < 0.5
+    if push_high:
+        t[axis] = workspace_max[axis] + margin * (0.5 + RNG.rand())
+    else:
+        t[axis] = workspace_min[axis] - margin * (0.5 + RNG.rand())
+    return t
+
+def check_joint_limits(q, joint_min, joint_max):
+    q = np.asarray(q).ravel()
+    vl = np.logical_or(q < joint_min, q > joint_max)
+    return bool(np.any(vl)), q
+
+def try_fk(arm, q):
+    """
+    Try to call kinematics.fk_right or fk_left if available.
+    Expectation: fk returns either a dict or (pos, quat).
+    Returns (pos(3), quat(4) or None).
+    """
+    try:
+        if arm == "right":
+            if hasattr(kinematics, "fk_right"):
+                res = kinematics.fk_right(q)
+            elif hasattr(kinematics, "fk"):
+                res = kinematics.fk("right", q)
+            else:
+                return None, None
+        else:
+            if hasattr(kinematics, "fk_left"):
+                res = kinematics.fk_left(q)
+            elif hasattr(kinematics, "fk"):
+                res = kinematics.fk("left", q)
+            else:
+                return None, None
+
+        # Normalize output
+        if res is None:
+            return None, None
+        if isinstance(res, dict):
+            pos = np.asarray(res.get("pos", res.get("position", None)))
+            quat = np.asarray(res.get("quat", res.get("orientation", None)))
+            return pos, quat
+        # if tuple-like
+        if isinstance(res, (list, tuple)) and len(res) >= 1:
+            pos = np.asarray(res[0])
+            quat = np.asarray(res[1]) if len(res) > 1 else None
+            return pos, quat
+        return None, None
+    except Exception:
+        # forward kinematics call failed
+        return None, None
+
+def main():
+    env = instantiate_env()
+    # read workspace bounds and joint limits from the environment if available
+    workspace_min = getattr(env, "workspace_min", np.array([-0.5, -0.5, 0.0], dtype=np.float32)).astype(np.float64)
+    workspace_max = getattr(env, "workspace_max", np.array([0.8, 0.5, 0.5], dtype=np.float32)).astype(np.float64)
+    joint_min = getattr(env, "joint_limits_min", np.array([-np.pi]*6)).astype(np.float64)
+    joint_max = getattr(env, "joint_limits_max", np.array([ np.pi]*6)).astype(np.float64)
+
+    print("Workspace min:", workspace_min)
+    print("Workspace max:", workspace_max)
+    print("Joint min:", joint_min)
+    print("Joint max:", joint_max)
+
+    # Build a sampling set
+    targets = []
+    for i in range(N_SAMPLES):
+        r = RNG.rand()
+        if r < OUT_OF_BOUNDS_RATIO:
+            targets.append(("outside", sample_target_outside(workspace_min, workspace_max)))
+        elif r < OUT_OF_BOUNDS_RATIO + NEAR_BOUNDARY_RATIO:
+            targets.append(("near", sample_target_near_boundary(workspace_min, workspace_max)))
+        else:
+            targets.append(("inside", sample_target_inside(workspace_min, workspace_max)))
+
+    # Also include current measured end-effector positions (should be reachable)
+    try:
+        obs = env._get_obs()
+        cur_r = obs[0:3].astype(np.float64)
+        cur_l = obs[3:6].astype(np.float64)
+        targets.insert(0, ("current_right", cur_r))
+        targets.insert(0, ("current_left", cur_l))
+    except Exception:
+        pass
+
+    stats = {
+        "right": {"attempted": 0, "success": 0, "fk_errors": [], "limit_violations": 0},
+        "left": {"attempted": 0, "success": 0, "fk_errors": [], "limit_violations": 0}
+    }
+
+    # Test loop
+    for kind, targ in targets:
+        targ = targ.astype(np.float64)
+        # Test right arm
+        stats["right"]["attempted"] += 1
+        try:
+            ikr = kinematics.ik_right(targ, q_init=getattr(env, "_last_ik_r", np.zeros(3)),
+                                      restarts=1, use_warm_start=True, tol=1e-3, max_nfev=500, skip_if_close=False)
+        except Exception as e:
+            ikr = None
+            print("ik_right threw exception for target", targ, ":", e)
+
+        if ikr and isinstance(ikr, dict) and ikr.get("success", False):
+            stats["right"]["success"] += 1
+            q = np.asarray(ikr["q"], dtype=np.float64)
+            viol, q = check_joint_limits(q, joint_min[:3], joint_max[:3])
+            if viol:
+                stats["right"]["limit_violations"] += 1
+
+            # forward check if possible
+            pos_fk, _ = try_fk("right", q)
+            if pos_fk is not None:
+                fk_err = float(np.linalg.norm(pos_fk - targ))
+                stats["right"]["fk_errors"].append(fk_err)
+            else:
+                stats["right"]["fk_errors"].append(np.nan)
+        else:
+            # failure
+            stats["right"]["fk_errors"].append(np.nan)
+
+        # Test left arm (same flow)
+        stats["left"]["attempted"] += 1
+        try:
+            ikl = kinematics.ik_left(targ, q_init=getattr(env, "_last_ik_l", np.zeros(3)),
+                                      restarts=1, use_warm_start=True, tol=1e-3, max_nfev=500, skip_if_close=False)
+        except Exception as e:
+            ikl = None
+            print("ik_left threw exception for target", targ, ":", e)
+
+        if ikl and isinstance(ikl, dict) and ikl.get("success", False):
+            stats["left"]["success"] += 1
+            q = np.asarray(ikl["q"], dtype=np.float64)
+            viol, q = check_joint_limits(q, joint_min[3:6], joint_max[3:6])
+            if viol:
+                stats["left"]["limit_violations"] += 1
+
+            pos_fk, _ = try_fk("left", q)
+            if pos_fk is not None:
+                fk_err = float(np.linalg.norm(pos_fk - targ))
+                stats["left"]["fk_errors"].append(fk_err)
+            else:
+                stats["left"]["fk_errors"].append(np.nan)
+        else:
+            stats["left"]["fk_errors"].append(np.nan)
+
+    # Summarize
+    def summarize_arm(name):
+        s = stats[name]
+        attempted = s["attempted"]
+        success = s["success"]
+        fk_errors = np.array([x for x in s["fk_errors"] if not (x is None or (isinstance(x, float) and np.isnan(x)))])
+        mean_fk_err = float(np.nan) if fk_errors.size == 0 else float(fk_errors.mean())
+        median_fk_err = float(np.nan) if fk_errors.size == 0 else float(np.median(fk_errors))
+        limit_viol = s["limit_violations"]
+        print("====", name.upper(), "SUMMARY ====")
+        print(f"Attempted: {attempted}")
+        print(f"IK successes: {success} ({100.0 * success/attempted:.1f}%)")
+        print(f"Joint-limit violations (solutions): {limit_viol}")
+        if fk_errors.size > 0:
+            print(f"FK position error (mean): {mean_fk_err:.6f} m")
+            print(f"FK position error (median): {median_fk_err:.6f} m")
+        else:
+            print("FK check not available or produced NaNs for all samples.")
+        print()
+
+    summarize_arm("right")
+    summarize_arm("left")
+
+    # Optionally print some failing samples details
+    print("Done. If you want to debug failures, re-run with smaller N_SAMPLES and print the returned 'ikr'/'ikl' dicts.")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
