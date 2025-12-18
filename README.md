@@ -2,6 +2,8 @@
 
 This repository contains the reinforcement learning environment, MuJoCo simulation assets, training scripts, and visualization tools for developing a controller for a two-arm climbing robot. The project uses **MuJoCo**, **Gymnasium**, and **Stable-Baselines3 (PPO)** to train end-effector reaching and grasping behaviors in a contact-rich environment.
 
+Note: This Repository is ongoing to improve the physical dyanmics and training efficiency of the robot and the scene. As training improves, the code will be simplified and clead to include the best training and will remove the hundreds of different training runs that have been executed while debugging the environment.
+
 ---
 
 ## 🚀 Features
