@@ -1,24 +1,22 @@
 """
 view_ppo.py  —  Watch a trained PPO checkpoint in the MuJoCo viewer.
 
-macOS: run with the PROJECT venv's mjpython (NumPy 2 — matches training pickles):
-    ../.venv/bin/mjpython view_ppo.py --tag natural1 --which latest --treadmill \
+Full setup: see ../README.md and README_v7.md.
+
+macOS (from test_7/, with conda env climbbot activated — NumPy 2 required):
+    mjpython view_ppo.py --tag simple --simple --which latest
+    mjpython view_ppo.py --tag natural1 --which latest --treadmill \\
         --spacing 0.15 --jitter-y 0.05 --jitter-z 0.25 --max-steps 1200
-    ../.venv/bin/mjpython view_ppo.py --tag slow1 --which latest --treadmill --spacing 0.15
-System/pyenv mjpython often has NumPy 1.x and cannot load VecNormalize stats saved
-under NumPy 2.x (BitGenerator pickle error).
+    ./view_natural1.sh
 
---which:  best  -> <tag>/best/best_model.zip
-          final -> <tag>/ppo_v7_final.zip
-          latest-> newest <tag>/checkpoints/ppo_v7_*_steps.zip
-Or pass an explicit --ckpt path.
+Do NOT use a venv whose path contains spaces (e.g. inside "Climbing Robot/") —
+mjpython's shebang breaks. Prefer ~/miniconda3/envs/climbbot.
 
-IMPORTANT: PPO here trains on VecNormalize-normalized observations. To replay faithfully
-the matching normalization stats must be loaded. This script looks for (in order):
-    <tag>/vecnormalize.pkl                  (saved at end of training)
-    <tag>/checkpoints/ppo_v7_vecnormalize_*_steps.pkl   (saved per-checkpoint; newest)
-If none is found it warns and runs UNNORMALIZED — the policy will look wrong. In that case
-re-run training with the updated train_v7.py (it now saves stats every checkpoint).
+--which:  best | final | latest   (or pass --ckpt path/to.zip)
+
+PPO trains on VecNormalize-normalized observations. This script loads the matching
+ppo_v7_vecnormalize_*_steps.pkl next to the checkpoint. Without those stats the
+policy looks random — keep zip + pickle together.
 """
 import argparse, os, glob, re, time
 import numpy as np
@@ -114,11 +112,13 @@ def main():
         except (ValueError, TypeError) as e:
             raise SystemExit(
                 f"\nFailed to load VecNormalize ({e}).\n"
-                "This is almost always a NumPy 1.x vs 2.x pickle mismatch.\n"
-                "Use the project venv's mjpython instead of system mjpython:\n"
-                "  ../.venv/bin/mjpython view_ppo.py --tag natural1 --which latest "
-                "--treadmill --spacing 0.15 --jitter-y 0.05 --jitter-z 0.25 "
-                "--max-steps 1200\n"
+                "Almost always a NumPy 1.x vs 2.x mismatch, or the wrong env.\n"
+                "Fix:\n"
+                "  conda activate climbbot          # needs NumPy >= 2\n"
+                "  python -c \"import numpy; print(numpy.__version__)\"\n"
+                "  mjpython view_ppo.py --tag natural1 --which latest --treadmill "
+                "--spacing 0.15 --jitter-y 0.05 --jitter-z 0.25 --max-steps 1200\n"
+                "See README_v7.md (Troubleshooting).\n"
             ) from e
         venv.training = False
         venv.norm_reward = False

@@ -1,19 +1,15 @@
 """
-train_v7.py  —  PPO training for the redesigned ClimbBot env.
+train_v7.py  —  PPO training for ClimbBot v7.
 
-Highlights vs the old train script:
-  * SubprocVecEnv (parallel envs) -> much higher throughput on CPU.
-  * VecNormalize for observations and rewards -> stable PPO with mixed-scale obs.
-  * Correct callbacks: eval, checkpoints, and a custom logger for the climbing
-    diagnostics (gripper-hold distance, contact force, success rate).
-  * Sensible PPO hyperparameters for a 24-dim obs / 6-dim continuous-action task.
+Full setup and curriculum: ../README.md and README_v7.md.
 
-Usage:
-    # Stage 0 (torso anchored): learn the reach + hook primitive
-    python train_v7.py --timesteps 300000 --n-envs 8 --tag stage0
+Quick start (from test_7/, conda env climbbot activated):
+    python train_v7.py --simple --timesteps 3000000 --n-envs 8 --tag simple
+    python train_v7.py --treadmill --spacing 0.15 --max-steps 1200 \\
+        --init-from simple --tag climb --timesteps 5000000 --n-envs 8
+    python train_v7.py --resume --tag climb --treadmill --spacing 0.15 ...
 
-    # Stage 1 (free torso): release the anchor and let it learn to hang/climb
-    python train_v7.py --timesteps 5000000 --n-envs 8 --no-freeze --tag stage1
+Outputs: runs_v7/<tag>/{checkpoints,best,tb}/ plus VecNormalize pickles.
 """
 import argparse, os, glob, re
 import numpy as np

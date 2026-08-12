@@ -1,0 +1,30 @@
+# Python / envs
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Training artifacts (large; regenerate locally)
+**/runs_v7/
+**/runs/
+**/ppo_climb_tensorboard/
+**/logs/
+**/eval_logs/
+**/checkpoints/
+**/best_model/
+**/best_models_by_success/
+*.zip
+!**/hang_start*.npy
+
+# Misc local files
+MUJOCO_LOG.TXT
+bus.jpg
+yolo26n.pt
+*.pt

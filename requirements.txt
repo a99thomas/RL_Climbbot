@@ -1,0 +1,16 @@
+# ClimbBot RL — install into a conda/venv whose path has NO SPACES
+# (macOS shebangs break if the env lives under "Climbing Robot/")
+#
+#   conda create -n climbbot python=3.12
+#   conda activate climbbot
+#   pip install -r requirements.txt
+#
+mujoco>=3.2,<4
+gymnasium>=1.0
+stable-baselines3>=2.3,<3
+torch>=2.2
+numpy>=2.0,<3
+scipy>=1.11
+matplotlib>=3.8
+tensorboard>=2.14
+tqdm>=4.66

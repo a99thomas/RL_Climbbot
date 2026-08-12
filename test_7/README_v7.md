@@ -1,198 +1,290 @@
-# ClimbBot RL — v7 redesign
+# ClimbBot v7 — user guide
 
-This folder is a working, learnable rebuild of the climbing-robot simulator. It replaces
-the `test_6` setup, which could not learn to climb **by construction** (see diagnosis
-below). Everything here is self-contained.
+This folder is the **only supported** training stack. It replaces `test_6/`, which could
+not learn to climb by construction (see [History](#history--why-v7-exists) at the bottom).
+
+For a short project overview and install steps, start at the repo
+[README.md](../README.md). This file is the detailed runbook for `test_7/`.
 
 ```
 test_7/
-  climb_env_v7.py        # the redesigned Gymnasium environment
-  train_v7.py            # PPO trainer (stable-baselines3) — for real training runs
-  prove_learning_cem.py  # dependency-free proof the env learns (no torch needed)
-  learning_curve_v7.png  # evidence: reward rises, hands reach holds, hooks engage
+  climb_env_v7.py      # Gymnasium env (control, obs, reward, gait)
+  train_v7.py          # PPO trainer (stable-baselines3)
+  view_ppo.py          # watch a checkpoint (use mjpython on macOS)
+  view_natural1.sh     # convenience launcher for --tag natural1
+  view_hang.py         # static hang pose
+  eval_headless.py     # moves / falls / tilt metrics
+  eval_hands.py        # left-first vs right-first split
+  prove_learning_cem.py
+  cem_train_v7.py
+  hang_start_*.npy     # saved hang poses for reset
 ../assets/
-  robot_v7.xml           # retuned robot (actuator gains, force limits, contacts)
-  scene_v7.xml           # wall + holds + stage-0 torso anchor
+  robot_v7.xml
+  scene_v7_treadmill.xml         # recommended
+  scene_v7_treadmill_holds.xml   # mesh holds (harder)
+  scene_v7_ladder.xml / scene_v7.xml / …
+```
+
+Outputs (not committed): `runs_v7/<tag>/checkpoints/`, `best/`, `tb/`, VecNormalize pickles.
+
+---
+
+## Prerequisites checklist
+
+1. `conda activate climbbot` (or your env with packages from `../requirements.txt`).
+2. Working directory is **`test_7/`**.
+3. Env path has **no spaces** (do not put a venv inside `Climbing Robot/`).
+4. **NumPy 2.x** (`python -c "import numpy; print(numpy.__version__)"`).
+5. On macOS, viewer commands use **`mjpython`**, train/eval use **`python`**.
+
+```bash
+conda activate climbbot
+cd test_7
+python -c "import mujoco, gymnasium, stable_baselines3, torch, numpy; print('numpy', numpy.__version__)"
 ```
 
 ---
 
-## Why the old version never worked (diagnosis)
+## 5-minute smoke tests
 
-Three independent showstoppers, each fatal on its own:
-
-1. **Nothing held the robot to the wall.** The torso is a `freejoint` and there was no
-   weld/connect anywhere. "Grasping" was only *detected* via contact force — it never
-   *created a constraint*. The robot fell every episode. No policy can climb a wall it
-   can't hang onto.
-2. **The phase machine was dead.** In the old `step()`, the `right_reach -> right_pull`
-   transition was commented out, so the episode froze in phase 1 forever; pull-up and
-   the left arm never ran.
-3. **The reward didn't describe climbing.** `w_grasp = w_pull = w_control = 0`. The only
-   live term was `-0.5 * (right-hand-to-hold distance)`. Best case: hover one hand near
-   one hold while the body falls.
-
-Plus it was impractical to train: a nonlinear least-squares **IK solver ran inside every
-RL step** (up to 6 restarts × 1500 evals); on failure it silently reused a stale solution,
-jolting the `kp = 15000` position servos and producing the `NaN in QACC` blow-ups in
-`MUJOCO_LOG.TXT`. There was also a latent bug — the left-arm branch called
-`ik_left(target_r, ...)` (wrong arm's target).
-
-## What changed in v7
-
-- **Joint-space control.** The policy outputs 6 small joint-target deltas straight to the
-  position servos. No IK in the loop → ~20–30× faster and far more stable.
-- **Physical grip (no cheating).** Holding on is real contact + friction between the hook
-  geoms and the holds. Nothing welds a hook to a hold.
-- **Retuned actuators / contacts.** `kp` 15000 → 120 (revolute) / 4000 (prismatic);
-  force limits 222 N·m → 12 N·m / 150 N; dropped the odd `timeconst`; softened contact
-  `solref` to `0.02 1` (≥ 2× timestep) and raised hold friction so hooks can bear load.
-- **Climbing-shaped dense reward:** reach the holds + press the hooks in (contact force)
-  + stay upright + small control cost; large penalty + episode end on a fall.
-- **Correct Gym semantics:** time-limit → `truncated`, fall → `terminated`.
-- **Stage-0 curriculum:** `scene_v7.xml` has a `base_anchor` weld that pins the torso to
-  the world at its spawn pose so the agent first learns reach+hook on a stable base. The
-  env toggles it off (`freeze_base=False`) for free-climbing stages.
-
-### Proof it learns (no torch required)
-`prove_learning_cem.py` trains a tiny policy with the Cross-Entropy Method on Stage-0:
-
-| metric | random baseline | after 12 CEM iters |
-|---|---|---|
-| episode return | −13.8 | **+474** |
-| right hand → hold | — | **0.046 m** (< 0.06 grasp) |
-| left hand → hold | — | **0.011 m** |
-| both hooks engaged | — | **97% of steps** |
-
-See `learning_curve_v7.png`.
-
----
-
-## How to run it (on your Mac)
-
-From `Climbing Robot/test_7/`:
+### Env can learn (no torch)
 
 ```bash
-# 0) one-time deps (your Mac, not the sandbox)
-pip install mujoco gymnasium stable-baselines3 scipy matplotlib
-
-# 1) quick, dependency-light sanity check that the env learns (~20s, no torch)
 python prove_learning_cem.py
-#    -> prints the table above and writes learning_curve_v7.png
-
-# 2) real training — Stage 0 (torso anchored): learn reach + hook
-python train_v7.py --timesteps 300000 --n-envs 8 --tag stage0
-#    logs to runs_v7/stage0/  (tensorboard, checkpoints, best model)
-
-# 3) watch training curves
-tensorboard --logdir runs_v7
-#    open http://localhost:6006  — look at rollout/ep_rew_mean and climb/*
-
-# 4) Stage 1 — release the torso for free climbing (longer run)
-python train_v7.py --timesteps 5000000 --n-envs 8 --no-freeze --tag stage1
+# writes learning_curve_v7.png; reward should rise sharply vs random
 ```
 
-### How to *watch the robot* in the MuJoCo viewer
-On macOS the interactive viewer MUST run under `mjpython` (ships with the mujoco pip
-package), not plain `python` — otherwise you get a "launch_passive requires mjpython"
-error. Headless training runs fine under normal `python`.
+### Hang is stable under zero action
 
 ```bash
-# watch the trained CEM policy (note: mjpython on macOS)
-mjpython cem_train_v7.py --tag stage0b --play
-
-# just look at the scene / poke the model
-python -m mujoco.viewer --mjcf=../assets/scene_v7.xml
-
-# or roll out a trained policy with the live viewer:
 python - <<'PY'
+import numpy as np
 from climb_env_v7 import ClimbBotEnv
-from stable_baselines3 import PPO
-env = ClimbBotEnv(freeze_base=True, render_mode="human")
-model = PPO.load("runs_v7/stage0/best/best_model")
-obs,_ = env.reset()
-for _ in range(2000):
-    a,_ = model.predict(obs, deterministic=True)
-    obs,r,term,trunc,info = env.step(a)
-    if term or trunc: obs,_ = env.reset()
+e = ClimbBotEnv(
+    xml_path="../assets/scene_v7_treadmill.xml",
+    treadmill=True, max_moves=1, tm_spacing=0.15, gravity_scale=0.4,
+    init_qpos_file="hang_start_treadmill.npy",
+    max_steps=200, init_joint_noise=0.02,
+)
+o, _ = e.reset(seed=0)
+for _ in range(150):
+    o, r, t, tr, info = e.step(np.zeros(6))
+print("base_z", round(info["base_z"], 3), "survived", not t)
 PY
 ```
 
----
+Healthy result: base ≈ 0.09 m, episode does **not** terminate.
 
-## v7.1 — physical rung grip + climbing (passive hook)
-
-A feasibility test proved the original flat holds **could not be gripped**: with pure
-friction the hooks slipped and the robot fell. Worse, the original hooks don't catch a
-plain cylinder either — what looked like a hang was actually the torso impaling a rung.
-The working fix (grip stays fully physical, no welds):
-
-- **Holds -> horizontal rungs** on a dense ladder (`assets/scene_v7_ladder.xml`), 0.2 m
-  spacing per side so each hand-over-hand move is reachable.
-- **One minimal capture bar per gripper** (`r_catch`/`l_catch` in `robot_v7.xml`): a thin
-  rod just above the grip point. The existing hook cradles the rung from below; this bar
-  stops it sliding out under load. Geometry of the original gripper is otherwise unchanged.
-- **Torso/arm-link vs rung collisions are excluded** so only the hooks touch rungs (the
-  body passes freely instead of jamming).
-
-Validated headlessly:
-- **The robot truly hangs from its hooks** — 34 N total (≈ body weight), stable for 1000+
-  steps even with the floor removed.
-- During a hand-coded pull-up the **support hook holds firm at 33 N** (it used to slip to 0)
-  and the body **pulls up 0.31 m**. So grip + pull-up both work; what remains is the policy
-  learning to coordinate "pull up while reaching" to fully seat the next rung — a PPO job.
-- The robot **hangs stably** from the saved start pose (`hang_start_qpos.npy`): base holds
-  at 0.25 m, 0 fall, for the whole episode.
-- Caveat: the arm has no wrist roll (2 revolute + 1 prismatic), so claw orientation is tied
-  to arm position — some rung positions give an upright (catching) claw, others tilt it.
-  The policy has to favour stances where the claw catches; load isn't always shared evenly.
-
-Climbing mode (`climb=True`) starts from the hang pose, frees the torso, and runs a
-**hand-over-hand gait state machine**:
-
-- Each hand owns its same-side rungs: left = hold_1/3/5, right = hold_2/4/6.
-- Hands start on the bottom rungs (hold_1, hold_2). The ACTIVE hand is rewarded for
-  reaching its next same-side rung (potential-based distance shaping); the SUPPORT hand is
-  rewarded for keeping a firm grip (contact force > `firm_thresh`, default 12 N).
-- A move only "counts" (big +10 reward, +height bonus) when the active hook grasps its
-  next rung AND the support hand is firmly holding. Then the hands swap roles:
-  left -> right -> left ... climbing the alternating rungs. Moving with a weak support
-  grip is penalized; a fall ends the episode.
-- Observation in climb mode (25-dim) is gait-aware: active-hand->next-rung vector,
-  support-hand->its-rung vector, both hook forces, and an active-hand flag.
-
-Each same-side move is a 0.4 m reach that requires a **pull-up** (the support arm hauls the
-torso up). This is verified kinematically feasible: the left hand can reach hold_3 (0 mm
-error) while the right stays on hold_2, with the base rising to z=0.32. It is, however, a
-hard coordination problem: CEM in-session learns to hang and grip firmly but does not
-discover the pull-up. **This is what the PPO run is for.** If PPO struggles, add
-intermediate rungs (smaller spacing) as a curriculum, or add an explicit pull-up shaping
-term (reward the support prismatic retracting while the active hand reaches).
+### Open the scene
 
 ```bash
-# dependency-free climbing sanity run (no torch)
-python cem_train_v7.py --tag climb --climb --ep-len 150 --seconds 60
-mjpython cem_train_v7.py --tag climb --climb --play          # watch it (macOS)
-
-# real climbing training with PPO (your Mac) — point train_v7 at the rung scene + climb env
-python train_v7.py --xml ../assets/scene_v7_rung.xml --no-freeze --timesteps 5000000 --tag climb
-#   (set the env to climb=True / init_qpos_file in make_env first — see climb_env_v7.py args)
+python -m mujoco.viewer --mjcf=../assets/scene_v7_treadmill.xml
+# or hang pose:
+mjpython view_hang.py
 ```
 
-## Roadmap to a full climb (honest expectations)
+---
 
-Stage 0 (proven here) is the reach+hook primitive on a fixed torso. To get to multi-move
-climbing you still need a real (hours-long, ideally GPU) training run through a curriculum:
+## Train
 
-1. **Stage 0** — torso anchored; reach + engage both hooks. *(working)*
-2. **Stage 1** — start hanging from one engaged hook; reach the free hand to the next hold
-   and engage it without falling. Raise `fall_z` so "fell" triggers on real drops.
-3. **Stage 2** — alternate hands to ascend N holds; reward net height gained.
+### Recommended first run: easy curriculum
 
-Each stage should warm-start from the previous stage's weights.
+`--simple` = treadmill + **0.4 g** + **0.15 m** rung spacing + **1 move** per episode.
 
-### Real-world caveat worth knowing
-The robot is ~3.1 kg (≈30 N). Hanging puts ≈12 N·m at each shoulder, but the DS3225MG
-servos are ~2.45 N·m. The v7 sim uses higher force limits so the policy can be developed,
-but the **physical** robot as modeled can't hold its own weight on two arms — you'll need
-higher-torque actuators, gearing, or a counterbalance before sim policies transfer.
+```bash
+python train_v7.py --simple --timesteps 3000000 --n-envs 8 --tag simple
+```
+
+Watch curves:
+
+```bash
+tensorboard --logdir runs_v7
+# http://localhost:6006 → climb/moves_done, rollout/success_rate, rollout/ep_rew_mean
+```
+
+Checkpoints every ~50k steps; best model every ~25k. Training is headless — re-run
+`view_ppo` on `--which latest` to “watch it train.”
+
+### Useful CLI flags (`train_v7.py`)
+
+| Flag | Meaning |
+|------|---------|
+| `--simple` | Easy curriculum (0.4 g, 0.15 m, 1 move) |
+| `--treadmill` | Scrolling mocap rungs (recommended scene) |
+| `--climb` | Ladder climb mode (non-treadmill) |
+| `--gravity-scale F` | Scale gravity (curriculum) |
+| `--spacing M` | Rung spacing in meters |
+| `--max-moves N` | End episode after N moves (`0` = unlimited) |
+| `--max-steps N` | Horizon (use `1200` for slow prismatics / multi-move) |
+| `--jitter-y M` / `--jitter-z F` | Randomize hold placement |
+| `--natural` | Stronger upright / smoothness / pull-then-reach priors |
+| `--time-penalty F` | Per-step cost (default `0.03` with `--natural`) |
+| `--push N` | Random lateral shoves up to N newtons |
+| `--tag NAME` | Output folder under `runs_v7/NAME` |
+| `--resume` | Continue latest checkpoint of `--tag` |
+| `--init-from TAG` | Warm-start weights from another tag |
+| `--ent-coef` / `--lr` / `--target-kl` / `--init-std` | PPO fine-tune knobs |
+
+### Curriculum that actually works
+
+Do **not** jump gravity 0.4 → 1.0 in one step (success collapses). Anneal, warm-starting each stage:
+
+1. `--simple` (0.4 g, 1 move)
+2. `--gravity-scale 0.7` → `0.85` → `1.0` (still 1 move)
+3. `--max-moves 0` for endless chaining
+4. Optional: `--jitter-y/--jitter-z`, then `--natural`, then `--push`
+
+Example natural-form fine-tune (after a strong 1 g policy such as `slow1` / `endless*`):
+
+```bash
+python train_v7.py --treadmill --spacing 0.15 --max-steps 1200 \
+  --jitter-y 0.05 --jitter-z 0.25 \
+  --init-from slow1 --tag natural1 --natural \
+  --lr 5e-5 --ent-coef 0.0003 --target-kl 0.03 \
+  --n-envs 8 --timesteps 5000000
+```
+
+Interrupted run:
+
+```bash
+python train_v7.py --resume --tag natural1 --treadmill --spacing 0.15 \
+  --max-steps 1200 --jitter-y 0.05 --jitter-z 0.25 --natural \
+  --lr 5e-5 --ent-coef 0.0003 --target-kl 0.03 --n-envs 8 --timesteps 5000000
+```
+
+Long laptop runs:
+
+```bash
+caffeinate -dims python train_v7.py …   # keeps Mac awake (lid + idle)
+```
+
+### Fine-tune hygiene
+
+- Default `ent_coef=0.005` can inflate action noise on long hard runs → use `0.0003–0.001`.
+- Prefer `--target-kl 0.02–0.03` so PPO does not thrash (`approx_kl` should sit near the target).
+- Changing obs/reward and `--resume`-ing causes ~100–200k steps of value re-fit — expected.
+
+---
+
+## View a trained policy
+
+```bash
+# Easy
+mjpython view_ppo.py --tag simple --simple --which latest
+
+# Full gravity treadmill (match train-time flags)
+mjpython view_ppo.py --tag slow1 --which latest --treadmill \
+  --spacing 0.15 --jitter-y 0.05 --jitter-z 0.25 --max-steps 1200
+
+# Natural-form tag
+./view_natural1.sh
+```
+
+`--which`: `latest` | `best` | `final`. Or pass `--ckpt path/to.zip`.
+
+The script loads the matching `ppo_v7_vecnormalize_*_steps.pkl`. Without those stats the
+policy will look broken — never relocate a `.zip` without its VecNormalize pickle.
+
+### macOS viewer rules
+
+| Do | Don't |
+|----|-------|
+| `mjpython view_ppo.py …` from the **conda** env | `python view_ppo.py …` |
+| Conda env under `~/miniconda3/envs/climbbot` | `../.venv/bin/mjpython` inside `Climbing Robot/` (space breaks shebang) |
+| NumPy 2.x | NumPy 1.x (cannot unpickle training stats) |
+
+---
+
+## Evaluate without a viewer
+
+```bash
+python eval_headless.py --tag natural1 --which latest --episodes 12 \
+  --gravity-scale 1.0 --spacing 0.15 --max-moves 0 --max-steps 1200 \
+  --jitter-y 0.05 --jitter-z 0.25 --natural
+
+python eval_hands.py --tag slow1 --episodes 10 --spacing 0.15 \
+  --max-steps 1200 --jitter-y 0.05 --jitter-z 0.25
+```
+
+`eval_headless` reports success rate, moves/episode, falls, mean tilt, and steps to first move.
+
+---
+
+## How the system works (short)
+
+### Control
+
+- Action ∈ [-1, 1]^6 → integrate `action * DELTA_SCALE` into position-servo targets.
+- Prismatics are intentionally slow (1.5 mm/control-step) for realism; full stroke ~3.6 s.
+- `frame_skip=20`, `dt=0.002` → 25 Hz control.
+
+### Grip (do not remove)
+
+Passive hooks alone slip off cylinders. Each gripper has a **catch bar** (`r_catch` /
+`l_catch` in `robot_v7.xml`). Keep them — without catch bars the robot cannot hang.
+
+### Treadmill task
+
+Six mocap rungs scroll. On a successful grab the lowest rung on that side recycles to the
+top, so there are never rungs below the body (avoids base-jam). Only hook geoms collide
+with rungs.
+
+### Gait
+
+- **Active** hand reaches next same-side rung; **support** hand must stay load-bearing.
+- Advance requires several consecutive steps of: close distance + cradled geometry +
+  signed upward force on both hooks (scaled to body weight).
+- **Mirror** mode (default): policy always “sees” a left-hand reach; right-hand turns are
+  mirrored. Required for chaining more than one move.
+
+### Reward (climb mode)
+
+Dense terms are **potential-based** (`Φ(s′) − Φ(s)`). Do not switch back to large
+per-step reach bonuses — that taught policies to park at the rung and farm reward.
+`--natural` tightens uprightness, adds action-jerk cost, wall proximity, and
+pull-then-reach cadence weights, and defaults `time_penalty=0.03`.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+|---------|-------------|
+| `launch_passive requires mjpython` | Use `mjpython` for viewers on macOS. |
+| `bad interpreter: .../Climbing` | Space in env path. Use conda, not a venv under this repo folder. |
+| `BitGenerator` / `PCG64` / `state must be a dict` | NumPy 1.x loading NumPy 2 pickles → upgrade NumPy in that env. |
+| Policy flails / falls immediately on replay | Missing VecNormalize; use `view_ppo.py` / eval scripts. |
+| `approx_kl` 0.1–0.3, `clip_fraction` ~0.5 | Set `--target-kl 0.03`; lower `--lr`. |
+| `log_std` / action std blows up | Lower `--ent-coef` (fine-tunes: `0.0003–0.001`). |
+| 0% success after stacking mesh + large jitter | Change **one** difficulty axis per stage; warm-start. |
+| Success collapses 0.7g → 1.0g | Insert 0.85 g stage. |
+| Torch dylib import error | Reinstall torch in the active env. |
+
+---
+
+## Mesh holds (optional, harder)
+
+Cylinder treadmill is the default. Mesh STL holds (`--mesh-holds`) have a narrow lip
+(±3 cm). Train insertion **without** jitter first, then anneal jitter carefully.
+See `test_mesh_holds.py` and notes in `CLAUDE.md`. Do not resume the failed `mesh1` tag.
+
+---
+
+## History / why v7 exists
+
+`test_6` failed for three independent reasons:
+
+1. No physical grip constraint — “grasp” was force detection only; robot always fell.
+2. Gait state machine was commented out — stuck in one phase forever.
+3. Grasp/pull reward weights were zero — only a weak distance term remained.
+
+Plus an IK solver ran inside every RL step (slow, non-stationary, NaN `QACC` blowups).
+
+v7 uses joint-space control, physical catch-bar grips, potential-based climbing rewards,
+and a treadmill curriculum. Design diary and dead-ends: [`CLAUDE.md`](CLAUDE.md).
+
+### Hardware caveat
+
+~3.1 kg robot; hanging shoulder torque exceeds DS3225MG-class servos. The sim allows
+higher torque so policies can be developed; real transfer needs stronger actuators,
+gearing, or a counterbalance.

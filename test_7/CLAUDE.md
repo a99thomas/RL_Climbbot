@@ -1,9 +1,10 @@
 # ClimbBot RL — project context (read me first)
 
-This is a MuJoCo + PPO project to teach a **two-arm climbing robot** to climb a wall of
-rungs, hand-over-hand. This file is the working memory: goal, design, what's been tried,
-what works, what doesn't, and how to run things. Read it before changing code so you don't
-re-introduce already-fixed bugs.
+**Humans setting up / training:** use [`../README.md`](../README.md) and
+[`README_v7.md`](README_v7.md) — those are the standalone runbooks.
+
+This file is **agent working memory**: goal, design, what's been tried, what works, what
+doesn't. Read it before changing code so you don't re-introduce already-fixed bugs.
 
 Everything current lives in `test_7/` (code) and `../assets/` (MJCF models). The older
 `test_6/` is the abandoned original (kept for reference only — see history).
