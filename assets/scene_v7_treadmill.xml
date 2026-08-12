@@ -1,0 +1,129 @@
+<mujoco model="climbbot_scene_v7_treadmill">
+  <include file="robot_v7.xml"/>
+
+  <visual>
+    <quality shadowsize="0"/>
+    <map znear="0.01" zfar="50"/>
+    <headlight ambient="0.4 0.4 0.4" diffuse="0.4 0.4 0.4"/>
+    <global fovy="89.16" offwidth="1280" offheight="720" azimuth="-150" elevation="-40"/>
+  </visual>
+
+  <option timestep="0.002" integrator="implicitfast" gravity="0 0 -9.81"/>
+
+  <default>
+    <default class="world_collision">
+      <geom material="collision_material" condim="4" contype="1" conaffinity="15" priority="2"
+            solref="0.01 1" solimp="0.97 0.999 0.0005" friction="2.0 0.1 0.05"/>
+    </default>
+  </default>
+
+  <compiler angle="radian"/>
+
+  <asset>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
+      markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+    <material name="wall_material" rgba="0.6 0.6 0.6 1"/>
+    <material name="rung_material" rgba="0.2 0.8 0.3 1"/>
+  </asset>
+
+  <worldbody>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" pos="0 0 -2.0" friction="1.0"/>
+
+    <!-- tall thin wall (just a visual/contact backdrop) -->
+    <geom name="wall_board" type="box" size="0.05 1.0 3.0" pos="0.045 0 1.0"
+          material="wall_material" class="world_collision"/>
+
+    <!-- MOCAP rungs: a small scrolling window. The env sets their world positions every
+         reset and recycles the lowest rung to the top after each secured grasp, so there
+         are never rungs below the body for the base to jam on. Rung axis = world y
+         (horizontal along the wall), protruding toward the robot (world -x). 3 per side. -->
+    <body name="hold_1" mocap="true" pos="-0.044 0.1 0.6">
+      <geom name="rung_1" type="cylinder" fromto="0 -0.09 0  0 0.09 0" size="0.012" material="rung_material" class="world_collision"/>
+      <site name="hold_1_site" pos="0 0 0" size="0.01" type="sphere" rgba="0 1 0 1"/>
+    </body>
+    <body name="hold_2" mocap="true" pos="-0.044 -0.2 0.6">
+      <geom name="rung_2" type="cylinder" fromto="0 -0.09 0  0 0.09 0" size="0.012" material="rung_material" class="world_collision"/>
+      <site name="hold_2_site" pos="0 0 0" size="0.01" type="sphere" rgba="0 1 0 1"/>
+    </body>
+    <body name="hold_3" mocap="true" pos="-0.044 0.1 0.8">
+      <geom name="rung_3" type="cylinder" fromto="0 -0.09 0  0 0.09 0" size="0.012" material="rung_material" class="world_collision"/>
+      <site name="hold_3_site" pos="0 0 0" size="0.01" type="sphere" rgba="0 1 0 1"/>
+    </body>
+    <body name="hold_4" mocap="true" pos="-0.044 -0.2 0.8">
+      <geom name="rung_4" type="cylinder" fromto="0 -0.09 0  0 0.09 0" size="0.012" material="rung_material" class="world_collision"/>
+      <site name="hold_4_site" pos="0 0 0" size="0.01" type="sphere" rgba="0 1 0 1"/>
+    </body>
+    <body name="hold_5" mocap="true" pos="-0.044 0.1 1.0">
+      <geom name="rung_5" type="cylinder" fromto="0 -0.09 0  0 0.09 0" size="0.012" material="rung_material" class="world_collision"/>
+      <site name="hold_5_site" pos="0 0 0" size="0.01" type="sphere" rgba="0 1 0 1"/>
+    </body>
+    <body name="hold_6" mocap="true" pos="-0.044 -0.2 1.0">
+      <geom name="rung_6" type="cylinder" fromto="0 -0.09 0  0 0.09 0" size="0.012" material="rung_material" class="world_collision"/>
+      <site name="hold_6_site" pos="0 0 0" size="0.01" type="sphere" rgba="0 1 0 1"/>
+    </body>
+  </worldbody>
+
+  <contact>
+    <!-- only gripper hooks touch rungs; base/arms pass freely -->
+    <exclude body1="robot_base_tilted" body2="hold_1"/>
+    <exclude body1="robot_base_tilted" body2="hold_2"/>
+    <exclude body1="robot_base_tilted" body2="hold_3"/>
+    <exclude body1="robot_base_tilted" body2="hold_4"/>
+    <exclude body1="robot_base_tilted" body2="hold_5"/>
+    <exclude body1="robot_base_tilted" body2="hold_6"/>
+    <exclude body1="assembly_9" body2="hold_1"/>
+    <exclude body1="assembly_9" body2="hold_2"/>
+    <exclude body1="assembly_9" body2="hold_3"/>
+    <exclude body1="assembly_9" body2="hold_4"/>
+    <exclude body1="assembly_9" body2="hold_5"/>
+    <exclude body1="assembly_9" body2="hold_6"/>
+    <exclude body1="assembly_13" body2="hold_1"/>
+    <exclude body1="assembly_13" body2="hold_2"/>
+    <exclude body1="assembly_13" body2="hold_3"/>
+    <exclude body1="assembly_13" body2="hold_4"/>
+    <exclude body1="assembly_13" body2="hold_5"/>
+    <exclude body1="assembly_13" body2="hold_6"/>
+    <exclude body1="part_1" body2="hold_1"/>
+    <exclude body1="part_1" body2="hold_2"/>
+    <exclude body1="part_1" body2="hold_3"/>
+    <exclude body1="part_1" body2="hold_4"/>
+    <exclude body1="part_1" body2="hold_5"/>
+    <exclude body1="part_1" body2="hold_6"/>
+    <exclude body1="part_4" body2="hold_1"/>
+    <exclude body1="part_4" body2="hold_2"/>
+    <exclude body1="part_4" body2="hold_3"/>
+    <exclude body1="part_4" body2="hold_4"/>
+    <exclude body1="part_4" body2="hold_5"/>
+    <exclude body1="part_4" body2="hold_6"/>
+    <exclude body1="assembly_8" body2="hold_1"/>
+    <exclude body1="assembly_8" body2="hold_2"/>
+    <exclude body1="assembly_8" body2="hold_3"/>
+    <exclude body1="assembly_8" body2="hold_4"/>
+    <exclude body1="assembly_8" body2="hold_5"/>
+    <exclude body1="assembly_8" body2="hold_6"/>
+    <exclude body1="assembly_10" body2="hold_1"/>
+    <exclude body1="assembly_10" body2="hold_2"/>
+    <exclude body1="assembly_10" body2="hold_3"/>
+    <exclude body1="assembly_10" body2="hold_4"/>
+    <exclude body1="assembly_10" body2="hold_5"/>
+    <exclude body1="assembly_10" body2="hold_6"/>
+    <exclude body1="part_1_2" body2="hold_1"/>
+    <exclude body1="part_1_2" body2="hold_2"/>
+    <exclude body1="part_1_2" body2="hold_3"/>
+    <exclude body1="part_1_2" body2="hold_4"/>
+    <exclude body1="part_1_2" body2="hold_5"/>
+    <exclude body1="part_1_2" body2="hold_6"/>
+    <exclude body1="part_4_2" body2="hold_1"/>
+    <exclude body1="part_4_2" body2="hold_2"/>
+    <exclude body1="part_4_2" body2="hold_3"/>
+    <exclude body1="part_4_2" body2="hold_4"/>
+    <exclude body1="part_4_2" body2="hold_5"/>
+    <exclude body1="part_4_2" body2="hold_6"/>
+  </contact>
+
+  <equality>
+    <weld name="base_anchor" body1="assembly_7" active="true"
+          solref="0.02 1" solimp="0.95 0.99 0.001"/>
+  </equality>
+</mujoco>
