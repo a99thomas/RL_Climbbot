@@ -10,6 +10,7 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
+tempCodeRunnerFile.*
 
 # Training artifacts (large; regenerate locally)
 **/runs_v7/
@@ -20,7 +21,17 @@ __pycache__/
 **/checkpoints/
 **/best_model/
 **/best_models_by_success/
+**/logs_climbbot_stage0/
+**/climbbot_ppo/
+**/models/
+**/tb/
+**/sb3_logs/
 *.zip
+events.out.tfevents.*
+*vecnormalize*.pkl
+vec_normalize.pkl
+monitor.csv
+evaluations.npz
 !**/hang_start*.npy
 
 # Misc local files
